@@ -11,6 +11,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE, fig.width=8, fig.height = 8)
+
 ```
 
 #Paquetes
@@ -21,6 +22,10 @@ library(knitr)
 library(lorem)
 library(xtable)
 library(stargazer)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(plotly)
 ```
 
 #Carga de datos
@@ -28,4 +33,204 @@ library(stargazer)
 ```{r}
 df <- read.csv("../Datos/Base de datos depurada/CRON2W4_clean.csv")
 
+```
+
+#RELACIÓN SALUD MENTAL Y CONFIANZA INSTITUCIONAL 
+```{r}
+# Ítems de salud mental
+neg <- c("w4q47","w4q48","w4q49","w4q51","w4q53","w4q54",
+         "w4q55","w4q56","w4q57","w4q58","w4q59","w4q60")
+pos <- c("w4q50","w4q52")
+
+# Columnas que realmente existen en df
+cols_exist <- intersect(c(neg, pos, "w4q61","w4q62","w4q63"), names(df))
+
+# Construcción de índices y rescalado
+df2 <- df %>%
+  # 1) Pasar a numérico (si venían como texto)
+  mutate(across(all_of(cols_exist), ~ suppressWarnings(as.numeric(.)))) %>%
+  # 2) Marcar como NA los códigos 77/88/99
+  mutate(across(all_of(cols_exist), ~ replace(., . %in% c(77,88,99), NA))) %>%
+  # 3) Forzar rangos válidos ANTES de invertir
+  mutate(across(all_of(c(neg, pos)), ~ ifelse(. < 1 | . > 4,  NA, .))) %>%
+  mutate(across(all_of(c("w4q61","w4q62","w4q63")), ~ ifelse(. < 0 | . > 10, NA, .))) %>%
+  # 4) Invertir solo los ítems negativos (1–4 -> 4–1)
+  mutate(across(all_of(intersect(neg, names(.))), ~ 5 - .)) %>%
+  # 5) Índices fila a fila
+  mutate(
+    mh_index   = rowMeans(across(all_of(intersect(c(neg, pos), names(.)))), na.rm = TRUE),
+    conf_index = rowMeans(across(all_of(intersect(c("w4q61","w4q62","w4q63"), names(.)))), na.rm = TRUE)
+  ) %>%
+  # 6) Reescalar a 0–100 y recortar por seguridad
+  mutate(
+    mh100   = ifelse(!is.na(mh_index)   & mh_index   >= 1 & mh_index   <= 4,
+                     rescale(mh_index,   to = c(0,100), from = c(1,4)),  NA_real_),
+    conf100 = ifelse(!is.na(conf_index) & conf_index >= 0 & conf_index <= 10,
+                     rescale(conf_index, to = c(0,100), from = c(0,10)), NA_real_)
+  ) %>%
+  mutate(
+    mh100   = pmin(pmax(mh100,   0), 100),
+    conf100 = pmin(pmax(conf100, 0), 100)
+  )
+
+# Chequeo rápido (se oculta en el knit porque echo=FALSE arriba)
+summary(df2$mh_index); summary(df2$mh100)
+
+# --- Gráfico 1: global ---
+ggplot(df2, aes(mh100, conf100)) +
+  geom_point(alpha = 0.15) +
+  geom_smooth(method = "lm", se = TRUE) +
+  scale_x_continuous(limits = c(0,100), expand = expansion(mult = 0)) +
+  scale_y_continuous(limits = c(0,100), expand = expansion(mult = 0)) +
+  labs(title = "Salud mental vs. Confianza institucional (global)",
+       x = "Salud mental (0–100, alto = mejor)",
+       y = "Confianza institucional (0–100)") +
+  theme_minimal()
+
+```
+#CONFIANZA INSTITUCIONAL POR PAÍS
+```{r}
+plot_df <- df2 %>%
+  dplyr::group_by(cntry) %>%
+  dplyr::summarise(
+    conf_mean = mean(conf_index, na.rm = TRUE),
+    conf_sd   = sd(conf_index,   na.rm = TRUE),
+    n = dplyr::n()
+  ) %>%
+  dplyr::arrange(conf_mean)
+
+p <- ggplot(plot_df,
+            aes(x = reorder(cntry, conf_mean), y = conf_mean,
+                # lo que se mostrará al pasar/tocar
+                text = sprintf("País: %s<br>Media: %.2f<br>SD: %.2f<br>n: %d",
+                               cntry, conf_mean, conf_sd, n))) +
+  geom_col(fill = "#5B8FD9") +
+  geom_errorbar(aes(ymin = pmax(conf_mean - conf_sd, 0),
+                    ymax = pmin(conf_mean + conf_sd, 10)),
+                width = .2, na.rm = TRUE) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 10)) +
+  labs(x = "País", y = "Confianza institucional (0–10)",
+       title = "Confianza institucional global por país") +
+  theme_minimal()
+
+ggplotly(p, tooltip = c("text", "y"))
+
+```
+#SALUD MENTAL POR PAÍS 
+```{r}
+# Datos resumidos por país
+plot_df1 <- df2 %>%
+  group_by(cntry) %>%
+  summarise(
+    mh_mean = mean(mh_index, na.rm = TRUE),
+    mh_sd   = sd(mh_index,   na.rm = TRUE),
+    n       = dplyr::n(),
+    .groups = "drop"
+  ) %>%
+  arrange(mh_mean)
+
+plot_ly(
+  data = plot_df1,
+  x = ~mh_mean,
+  y = ~reorder(cntry, mh_mean),
+  type = "bar",
+  orientation = "h",
+  text = ~sprintf("País: %s<br>Media: %.2f<br>SD: %.2f<br>n: %d",
+                  cntry, mh_mean, mh_sd, n),
+  hoverinfo = "text",
+  marker = list(color = "#2E7D32"),
+  error_x = list(type = "data", array = ~mh_sd, color = "#333")
+) %>%
+  layout(
+    title = "Salud mental promedio por país",
+    xaxis = list(title = "Salud mental (1–4, alto = mejor)", range = c(1,4)),
+    yaxis = list(title = "País"),
+    bargap = 0.2
+  )
+
+```
+
+#NIVEL EDUCATIVO POR PAÍS
+```{r}
+plot_df5 <- df2 %>%
+  filter(!is.na(eisced), eisced %in% 1:7) %>%
+  mutate(eisced = as.integer(eisced)) %>%
+  group_by(cntry) %>%
+  summarise(
+    educ_mean = mean(eisced, na.rm = TRUE),
+    educ_sd   = sd(eisced,   na.rm = TRUE),
+    n         = dplyr::n(),
+    .groups = "drop"
+  ) %>%
+  arrange(educ_mean)
+
+plot_ly(
+  plot_df5,
+  x = ~educ_mean,
+  y = ~reorder(cntry, educ_mean),
+  type = "bar",
+  orientation = "h",
+  text = ~sprintf("País: %s<br>Media: %.2f<br>SD: %.2f<br>n: %d",
+                  cntry, educ_mean, educ_sd, n),
+  hoverinfo = "text",
+  marker = list(color = "#8E44AD"),
+  error_x = list(type = "data", array = ~educ_sd, color = "#333")
+) %>%
+  layout(
+    title = "Nivel educativo promedio por país",
+    xaxis = list(title = "Nivel educativo medio (1–7)", range = c(1,7)),
+    yaxis = list(title = "País"),
+    bargap = 0.2
+  )
+```
+#CONFIANZA POR NIVEL EDUCATIVO 
+```{r}
+# 1) Datos + columnas precomputadas (factor y tooltip)
+plot_df3 <- df2 %>%
+  filter(!is.na(eisced), eisced %in% 1:7, !is.na(conf_index)) %>%
+  mutate(
+    eisced  = as.integer(eisced),
+    eisced_f = factor(eisced, levels = sort(unique(eisced))),
+    tt = paste0("Nivel educativo: ", eisced,
+                "<br>Confianza: ", round(conf_index, 2))
+  )
+
+# 2) ggplot usando SOLO nombres de columnas (sin llamadas dentro de aes)
+p_conf_educ <- ggplot(plot_df3,
+                      aes(x = eisced_f, y = conf_index, text = tt)) +
+  geom_boxplot(fill = "#9ED0FF") +
+  labs(x = "Nivel educativo (1–7)",
+       y = "Confianza institucional (0–10)",
+       title = "Confianza institucional por nivel educativo") +
+  theme_minimal()
+
+# 3) Convertir a interactivo
+ggplotly(p_conf_educ, tooltip = "text")
+
+```
+
+#SALUD MENTAL POR NIVEL EDUCATIVO
+```{r}
+# 1) Preparamos datos con tooltip
+plot_df4 <- df2 %>%
+  filter(!is.na(eisced), eisced %in% 1:7, !is.na(mh_index)) %>%
+  mutate(
+    eisced = as.integer(eisced),
+    eisced_f = factor(eisced, levels = sort(unique(eisced))),
+    tt = paste0("Nivel educativo: ", eisced,
+                "<br>Salud mental: ", round(mh_index, 2))
+  )
+
+# 2) ggplot usando columnas directas
+p_mh_educ <- ggplot(plot_df4,
+                    aes(x = eisced_f, y = mh_index, text = tt)) +
+  geom_boxplot(fill = "pink") +
+  labs(x = "Nivel educativo (1–7)",
+       y = "Salud mental (1–4, alto = mejor)",
+       title = "Distribución de salud mental según nivel educativo") +
+  theme_minimal()
+
+# 3) Convertimos a interactivo
+ggplotly(p_mh_educ, tooltip = "text")
 ```
