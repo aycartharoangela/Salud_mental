@@ -1,0 +1,31 @@
+---
+title: "Código"
+author: "Angela Aycart"
+date: "2025-08-29"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE, fig.width=8, fig.height = 8)
+```
+
+#Paquetes
+
+```{r}
+library(tidyverse)
+library(knitr)
+library(lorem)
+library(xtable)
+library(stargazer)
+```
+
+#Carga de datos
+
+```{r}
+df <- read.csv("../Datos/Base de datos depurada/CRON2W4_clean.csv")
+
+```
