@@ -1,0 +1,102 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\geometry{a4paper, total={170mm,257mm}, left=20mm, top=20mm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+
+\title{Informe técnico – Salud mental (CRONOS2 W4)}
+\author{Ángela Aycart}
+\date{30/08/2025}
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+\maketitle
+
+% ----------------- SETUP: paquetes, lectura, df2 -----------------
+<<setup, include=FALSE>>=
+library(dplyr)
+library(ggplot2)
+library(xtable)
+library(here)
+
+
+knitr::opts_knit$set(root.dir = here())
+
+# Carga CSV 
+csv_path <- here("Datos","Base de datos depurada","CRON2W4_clean.csv")
+stopifnot(file.exists(csv_path))
+df <- read.csv(csv_path, na.strings = c("", "NA"))
+
+# Ítems para índices
+neg  <- c("w4q47","w4q48","w4q49","w4q51","w4q53","w4q54",
+          "w4q55","w4q56","w4q57","w4q58","w4q59","w4q60")
+pos  <- c("w4q50","w4q52")
+conf <- c("w4q61","w4q62","w4q63")
+
+cols_exist <- intersect(c(neg,pos,conf), names(df))
+
+# Construcción de df2
+df2 <- df %>%
+  mutate(across(all_of(cols_exist), ~ suppressWarnings(as.numeric(.)))) %>%
+  mutate(across(all_of(cols_exist), ~ replace(., . %in% c(77,88,99), NA))) %>%
+  mutate(across(all_of(intersect(c(neg,pos), names(.))), ~ ifelse(. < 1 | . > 4,  NA, .))) %>%
+  mutate(across(all_of(intersect(conf,    names(.))), ~ ifelse(. < 0 | . > 10, NA, .))) %>%
+  mutate(across(all_of(intersect(neg, names(.))), ~ 5 - .)) %>%
+  mutate(
+    mh_index   = rowMeans(across(all_of(intersect(c(neg,pos), names(.)))), na.rm = TRUE),
+    conf_index = rowMeans(across(all_of(intersect(conf,    names(.)))),    na.rm = TRUE)
+  )
+@
+
+\section{Tabla resumen}
+
+\begin{table}[ht]
+\centering
+<<tab_resumen, results=tex, echo=FALSE>>=
+tab <- df2 %>%
+  summarise(
+    `Salud mental (1--4)`    = mean(mh_index,   na.rm=TRUE),
+    `Confianza (0--10)`      = mean(conf_index, na.rm=TRUE),
+    `Nivel educativo (1--7)` = mean(eisced,     na.rm=TRUE),
+    n = dplyr::n()
+  )
+
+print(xtable(tab,
+             caption="Resumen de indicadores en la muestra",
+             label="tab:resumen",
+             digits=c(0,2,2,2,0)),
+      include.rownames=FALSE,
+      comment=FALSE,
+      floating=FALSE)   # ya estamos dentro de \begin{table}
+@
+\caption{Resumen de indicadores en la muestra}
+\label{tab:resumen}
+\end{table}
+
+\section{Gráfico principal}
+
+En la Figura~\ref{fig:mh_conf} se muestra la relación entre salud mental y confianza institucional.
+
+\begin{figure}[ht]
+\centering
+<<mh_conf, echo=FALSE, fig=TRUE, width=6, height=4>>=
+ggplot(df2, aes(x = mh_index, y = conf_index)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(x = "Salud mental (1--4)", y = "Confianza Institucional (0--10)") +
+  theme_minimal()
+@
+\caption{Relación salud mental y confianza}
+\label{fig:mh_conf}
+\end{figure}
+
+\section{Interpretación}
+
+La Tabla~\ref{tab:resumen} presenta indicadores medios para la muestra total.
+La Figura~\ref{fig:mh_conf} evidencia una relación positiva:
+a mayor salud mental, la confianza institucional tiende a ser mayor. Asimismo parece haber una relación positiva entre la confianza institucional y la salud mental y el nivel educativo, aunque no se muestra ningún resultado significativo.
+
+\end{document}
