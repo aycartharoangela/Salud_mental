@@ -1,0 +1,69 @@
+---
+title: "Código"
+output: html_document
+---
+
+---
+title: "Resultados CRONOS2 W4: Salud mental, confianza y educación"
+author: "Ángela Aycart"
+date: "`r format(Sys.Date(), '%31/%08/%2025')`"
+output:
+  ioslides_presentation:
+    widescreen: true
+    self_contained: true
+    incremental: true
+---
+```{r}
+# Paquetes
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(here)
+
+knitr::opts_knit$set(root.dir = here())
+
+# --- Carga de datos ---
+csv_path <- here("Datos","Base de datos depurada","CRON2W4_clean.csv")
+stopifnot(file.exists(csv_path))
+df <- read.csv(csv_path, na.strings = c("", "NA"))
+# Objetivo: explorar la relación entre salud mental, confianza institucional y nivel educativo usando CRONOS2 Wave 4.
+# Salud mental (1-4): se invierten los ítems negativos y se calcula media por persona.
+# Confianza (0-10): media de w4q61-w4q63.
+# Se tratan códigos 77/88/99 como NA.
+neg  <- c("w4q47","w4q48","w4q49","w4q51","w4q53","w4q54",
+          "w4q55","w4q56","w4q57","w4q58","w4q59","w4q60")
+pos  <- c("w4q50","w4q52")
+conf <- c("w4q61","w4q62","w4q63")
+cols_exist <- intersect(c(neg,pos,conf), names(df))
+
+df2 <- df %>%
+  mutate(across(all_of(cols_exist), ~ suppressWarnings(as.numeric(.)))) %>%
+  mutate(across(all_of(cols_exist), ~ replace(., . %in% c(77,88,99), NA))) %>%
+  mutate(across(all_of(intersect(c(neg,pos), names(.))), ~ ifelse(. < 1 | . > 4,  NA, .))) %>%
+  mutate(across(all_of(intersect(conf,    names(.))), ~ ifelse(. < 0 | . > 10, NA, .))) %>%
+  mutate(across(all_of(intersect(neg, names(.))), ~ 5 - .)) %>%
+  mutate(
+    mh_index   = rowMeans(across(all_of(intersect(c(neg,pos), names(.)))), na.rm = TRUE),
+    conf_index = rowMeans(across(all_of(intersect(conf,    names(.)))),    na.rm = TRUE)
+  )
+
+# Tabla resumen
+tab_resumen <- df2 %>%
+  summarise(
+    `Salud mental (1–4)`    = mean(mh_index,   na.rm = TRUE),
+    `Confianza (0–10)`      = mean(conf_index, na.rm = TRUE),
+    `Nivel educativo (1–7)` = mean(eisced,     na.rm = TRUE),
+    n = dplyr::n()
+  )
+kable(tab_resumen, digits = 2, align = "r")
+#Gráfico principal. 
+# La pendiente del ajuste lineal sugiere que a mayor confianza institucional media, mayor bienestar psicológico. 
+ggplot(df2, aes(x = mh_index, y = conf_index)) +
+  geom_point(alpha = 0.20) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  labs(title = "Salud mental vs. Confianza institucional",
+       x = "Salud mental (1–4, alto = mejor)",
+       y = "Confianza institucional (0–10)") +
+  theme_minimal()
+
+```
